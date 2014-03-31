@@ -6,40 +6,63 @@ import java.io.*;
 import stork.feather.util.*;
 
 /**
- * A memory-efficient representation of a path name.
+ * A representation of an absolute path adhering to RFC 3986's definition of
+ * URI path components. This class is designed to be memory-efficient for
+ * storing very large path trees. The instantiation of new {@code Path}s is
+ * controlled internally, and {@link #create(String)} must be used to parse
+ * strings into {@code Path} objects.
+ * <p/>
+ * All paths are absolute paths and will never contain components with the
+ * names {@code ".."} or {@code "."}.
+ * <p/>
+ * {@code Path} objects are immutable and are safe to use as keys in a map or
+ * entries in a set.
  */
-public abstract class Path {
+public class Path {
   private final String name;
+  private final Path up;
   private transient int hash = 0;
 
   private static final Intern<Path> INTERN = new Intern<Path>();
+  private static final String[] EMPTY_SEGMENT_ARRAY = new String[0];
 
-  public Path(String name) {
-    this.name = name;
+  // Only root should be created with this.
+  private Path() {
+    up = this;
+    name = null;
   }
 
-  // The root path, which should be the only path with a blank name.
-  public static final Path ROOT = new Path("") {
-    public Path up()         { return this; }
-    public int length()      { return 0; }
-    public String toString(boolean escaped) {
-      return escaped ? "" : "/";
-    }
-  };
+  private Path(Path up, String name) {
+    this.up = up;
+    this.name = Intern.string(name);
+  }
 
   /**
-   * Return the parent of this path segment.
+   * The top-level parent of all paths. This is the only path whose parent is
+   * itself, and the only path whose component length is 0.
+   */
+  public static final Path ROOT = new Path();
+
+  /**
+   * Return the parent of this path segment. If this path has a length of 1 or
+   * less, this method will return the root path.
+   *
    * @return The parent of this path segment.
    */
-  public abstract Path up();
+  public final Path up() { return up; }
 
   /**
    * Paths should be created using this static method, which will take care of
    * interning segments and unescaping segment names.
+   *
+   * @param path an escaped string representation of a path. 
+   * @return The {@code Path} represented by {@code path}.
    */
   public static Path create(String path) {
     return create(ROOT, path);
-  } private static Path create(Path par, String path) {
+  }
+
+  private static Path create(Path par, String path) {
     String[] ps = popSegment(path);
     return (ps == null) ? par : create(par, ps[0]).appendSegment(ps[1]);
   }
@@ -53,67 +76,55 @@ public abstract class Path {
     while (e > 0 && p.charAt(e) == '/') e--;  // Trim slashes.
     if (e <= 0) return null;  // All slashes (or empty).
     s = p.lastIndexOf('/', e);
-    if (s < 0) s = 0;
+    if (s < 0)
+      return new String[] { "", p.substring(0, e+1) };
     return new String[] { p.substring(0, s), p.substring(s+1, e+1) };
   }
 
   /**
-   * Return a new path with the given path appended. This is implemented using
-   * a wrapper around the passed path that delegates operations to the wrapped
-   * path.
+   * Return a new path with the given path appended.
    *
    * @param path an escaped string representation of a path
    */
-  public Path append(String path) {
+  public final Path appendPath(String path) {
     return create(this, path);
   }
 
   /**
-   * Return a new path with the given path appended. This is implemented using
-   * a wrapper around the passed path that delegates operations to the wrapped
-   * path.
+   * Return a new path with the given path appended.
    *
-   * @param path a path to append
-   * @return a path with the given path appended
+   * @param path a path to append.
+   * @return A path with the given path appended.
    */
-  public Path append(final Path path) {
-    if (path.isRoot() && path.name().isEmpty())
-      return this;
-    return new Path(path.name) {
-      public Path up() {
-        return path.up().isRoot() ? Path.this : Path.this.append(path.up());
-      }
-      public String toString(boolean escaped) {
-        return Path.this.toString(escaped)+path.toString(escaped);
-      }
-      public int length() {
-        return Path.this.length()+path.length();
-      }
-    };
+  public final Path append(Path path) {
+    Path p = this;
+    for (String n : path.explode())
+      p = p.appendSegment(n);
+    return p;
   }
 
   /**
-   * Create a path segment with the given name whose parent is this path.
+   * Create a path segment with the given name whose parent is this path. If
+   * {@code name} is {@code "."}, this method returns {@code this}. If {@code
+   * name} is {@code ".."}, this method returns the same thing as {@link
+   * #up()}.
    *
-   * @param name the unescaped name of a segment
+   * @param name the unescaped name of a segment.
    */
   public Path appendSegment(final String name) {
     if (name.equals("."))
       return this;
     if (name.equals(".."))
       return up();
-    return new Path(name) {
-      public Path up() { return Path.this; }
-    };
+    return INTERN.intern(new Path(this, name));
   }
 
   /**
    * Return the unescaped name of this path segment.
+   *
    * @return The unescaped name of this path segment.
    */
-  public final String name() {
-    return name;
-  }
+  public final String name() { return name; }
 
   /**
    * Return the name of this path segment, either escaped or unescaped.
@@ -125,12 +136,26 @@ public abstract class Path {
   }
 
   /**
-   * Check if this path segment is a rooit. Roots are any paths whose parents
-   * are themselves.
+   * Check if this path is the prefix of another path.
+   *
+   * @param path the path to check if this path is a prefix of.
    */
-  public final boolean isRoot() {
-    return up() == this;
+  public boolean prefixes(Path path) {
+    if (path == this)
+      return true;
+    if (this.isRoot())  // 
+      return true;
+    if (path.isRoot())
+      return false;
+    if (this.name().equals(path.name()))
+      return this.up().prefixes(path.up());
+    return this.prefixes(path.up());
   }
+
+  /**
+   * Check if this path segment is the root path.
+   */
+  public final boolean isRoot() { return this == ROOT; }
 
   /**
    * Return a string representation of the path.
@@ -138,9 +163,9 @@ public abstract class Path {
    * @param escaped whether or not the escape the segment names
    */
   public String toString(boolean escaped) {
-    String j = "/";
-    return up().isRoot() ? up().name(escaped)+j+name(escaped) :
-           isRoot()      ? name(escaped) : up()+j+name(escaped);
+    return isRoot() ? "/" :
+           up.isRoot() ? "/"+name(escaped) :
+           up+"/"+name(escaped);
   }
 
   /**
@@ -163,11 +188,40 @@ public abstract class Path {
   }
 
   /**
+   * Explode this path into its unescaped component names.
+   *
+   * @return An array of the names of this path's components.
+   */
+  public final String[] explode() {
+    if (isRoot())
+      return EMPTY_SEGMENT_ARRAY;
+    String[] list = new String[length()];
+    Path p = this;
+    for (int i = list.length-1; i >= 0; i--) {
+      list[i] = p.name();
+      p = p.up();
+    }
+  }
+
+  /**
+   * Implode an array of unescaped component names into a {@code Path}.
+   *
+   * @param names component names to implode into a {@code Path}.
+   * @return {@code names} merged into a {@code Path}.
+   */
+  public static Path implode(String... names) {
+    Path p = ROOT;
+    for (String n : names)
+      p = p.appendSegment(names);
+    return p;
+  }
+
+  /**
    * Returns whether this is a globbed path. That is, whether or not this path
    * has a glob segment in it somewhere.
    *
    * @return {@code true} if this path has a glob segment in it somewhere;
-   * {@code false} otherwise
+   * {@code false} otherwise.
    */
   public boolean isGlob() {
     //return up().isGlob();
@@ -178,51 +232,37 @@ public abstract class Path {
    * Return the number of segments in the path.
    * @return The number of segments in the path.
    */
-  public int length() {
-    return up().length()+1;
-  }
+  public final int length() { return this == ROOT ? 0 : up.length()+1; }
 
   /**
    * The hash code of a path should be equal to the hash code of the string
-   * representation of the path. Of course we should do this without actually
-   * stringifying the entire path, which we can with a little bit of math. The
-   * hash code of a string is defined in the Java documentation.
+   * representation of the path.
    */
   public int hashCode() {
+    // TODO: Of course we should do this without actually stringifying the
+    // entire path, which we can with a little bit of math. The hash code of a
+    // string is defined in the Java documentation.
     return (hash != 0) ? hash : (hash = toString().hashCode());
-
-    /*
-    int h = hash;
-
-    if (h != 0)
-      return h;
-    if (isRoot())
-      return hash = toString().hashCode();
-    return hash = up().hashCode()*31 + '/'*31 + 
-
-    return h;
-    */
   }
 
   /**
-   * Check if two paths are equal. Two paths are equal if they are
+   * Check if two paths are equal. That is, check that two paths are
    * component-wise equal.
    */
   public boolean equals(Object o) {
-    if (o == this) {
+    if (o == this)
       return true;
-    } if (o instanceof Path) {
-      Path p = (Path) o;
-      return componentEquals(p) && up().equals(p.up());
-    } return false;
-  }
-
-  /**
-   * Check if two path end components are equal in their escaped
-   * representations.
-   */
-  public boolean componentEquals(Path p) {
-    return toString().equals(p.toString());
+    if (!(o instanceof Path))
+      return false;
+    return equals((Path)o);
+  } private boolean equals(Path p) {
+    if (p == this)
+      return true;
+    if (p.isRoot() || isRoot())  // ROOT.equals(ROOT) caught by above.
+      return false;
+    if (p.hash != 0 && hash != 0 && p.hash != hash)  // Small optimization.
+      return false;
+    return name.equals(p.name) && up.equals(p.up);
   }
 
   /**

@@ -179,6 +179,8 @@ public class Scheduler {
       } catch (Exception e) {
         e.printStackTrace();
         req.ring(e);
+      } else {
+        Log.fine("Request pulled from queue was cancelled.");
       }
     }
   }
@@ -513,8 +515,7 @@ public class Scheduler {
     }.start();
   }
 
-  // Put a command in the server's request queue with an optional reply
-  // bell and end bell.
+  // Put a command in the server's request queue.
   public Request putRequest(Ad ad) {
     return putRequest(new Request(ad));
   } public Request putRequest(Request rb) {

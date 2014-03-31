@@ -4,15 +4,11 @@ import stork.ad.*;
 import stork.feather.*;
 import java.util.*;
 
-/**
- * Represents a client request to be handled.
- */
 public class Request extends Bell<Object> {
-  public final Ad ad;
-  public final String cmd;
+  public Ad ad;
+  public String command;
   public User user;
   public Scheduler.CommandHandler handler;
-  private Ad reply = null;
 
   public Request(Ad ad) {
     cmd = ad.get("command");

@@ -35,7 +35,7 @@ public class FTPSession extends Session {
     super(uri, cred);
   }
 
-  public Bell<Void> open() {
+  public Bell<Void> doOpen() {
     final Bell<Void> bell = new Bell<Void>();
     String user = "anonymous";
     String pass = "";
@@ -77,9 +77,9 @@ public class FTPSession extends Session {
   }
 
   // Perform a listing of the given path relative to the root directory.
-  public synchronized Bell<Stat> stat(final URI uri) {
-    return stat(uri, null);
-  } private synchronized Bell<Stat> stat(final URI uri, final Stat base) {
+  public synchronized Bell<Stat> doStat(final URI uri) {
+    return doStat(uri, null);
+  } private synchronized Bell<Stat> doStat(final URI uri, final Stat base) {
     final Path path = (uri.path() != null) ? uri.path() : Path.ROOT;
     return new Bell<Stat>() {
       { tryListing(ListCommand.values()[0]); }
@@ -147,23 +147,23 @@ public class FTPSession extends Session {
   }
 
   // Create a directory at the end-point, as well as any parent directories.
-  public Bell<Void> mkdir(URI uri) {
+  public Bell<Void> doMkdir(URI uri) {
     return null;
   }
 
   // Remove a file or directory.
-  public Bell<Void> rm(URI uri) {
+  public Bell<Void> doRm(URI uri) {
     return null;
   }
 
-  public Bell<Sink> sink(final URI uri) {
+  public Bell<Sink> doSink(final URI uri) {
     return (Bell<Sink>) ch.new DataChannel() {{
       new Command("STOR", uri.path());
       unlock();
     }}.bell();
   }
 
-  public Bell<Tap> tap(final URI uri) {
+  public Bell<Tap> doTap(final URI uri) {
     return (Bell<Tap>) ch.new DataChannel() {{
       new Command("RETR", uri.path());
       unlock();
@@ -171,7 +171,7 @@ public class FTPSession extends Session {
   }
 
   // Close the session and free any resources.
-  public void cleanup() {
+  public void doClose() {
     ch.close();
   }
 }

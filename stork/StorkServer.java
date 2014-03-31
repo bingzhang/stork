@@ -45,8 +45,9 @@ public class StorkServer extends Command {
     for (URI u : listen) try {
       // Fix shorthand URIs.
       if (u.scheme() == null)
-        u = new URI.Builder().scheme(u.toString());
-      StorkInterface.create(s, u).start();
+        u = new URI.Builder().scheme(u.path().name()).port(-1);
+      StorkInterface si = StorkInterface.create(s, u);
+      Log.info("Listening for ", si.name(), " connections on: "+si.addr());
     } catch (Exception e) {
       e.printStackTrace();
       Log.warning("could not create interface: "+e.getMessage());
@@ -54,6 +55,6 @@ public class StorkServer extends Command {
 
     // Initialize web server for web documents.
     if (web_url != null)
-      HttpInterface.register("web", web_url);
+      HttpInterface.register("web", web_url).start();
   }
 }

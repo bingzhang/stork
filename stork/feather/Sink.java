@@ -13,31 +13,56 @@ package stork.feather;
  * @see Tap
  * @see Slice
  */
-public interface Sink {
-  /**
-   * Called when an upstream tap emits a {@link Slice}. The sink should
-   * attempt to drain the slice as soon as possible. If, after writing, the
-   * sink can no longer drain slices (e.g., when the connection to the remote
-   * resource is overwhelmed), it should call {@link Tap#cork()} on the tap the
-   * slice came from, and call {@link Tap#uncork()} when more data can be
-   * written. In case the tap is implemented incorrectly and does not obey the
-   * semantics of {@link Tap#cork()} and {@link Tap#uncork()}, the sink should
-   * retain any slices not drained and drain them when it is able to. The sink
-   * should never discard a slice.
-   * <p/>
-   * An empty slice indicates that the associated resource has been fully
-   * transferred and no further slices will arrive for that resource. The
-   * entire transfer is complete when an empty slice from the tap's root
-   * resource is passed to this method, after which the sink may begin
-   * finalizing the transfer.
-   *
-   * @param data a slice of data coming from an attached tap
-   */
-  void drain(Slice data);
+public abstract class Sink implements ProxyEnd {
+  private ProxyTransfer transfer;
+  private final Resource resource;
 
   /**
-   * Check if this sink supports random data access.
+   * Create a {@code Sink} with the given {@code Resource} as the root resource.
+   *
+   * @param resource the {@code Resource} this {@code Sink} receives data for.
+   * @throws NullPointerException if {@code resource} is {@code null}.
    */
+  public Sink(Resource resource) {
+    if (resource == null)
+      throw new NullPointerException();
+    this.resource = resource;
+  }
+
+  // Get the transfer, or throw an IllegalStateException if the transfer is not
+  // ready.
+  private final void transfer() {
+    if (transfer == null)
+      throw new IllegalStateException();
+    return transfer;
+  }
+
+  public Resource root() { return resource; }
+
+  /**
+   * Attach this sink to a tap. Once this method is called, {@link #start()}
+   * will be called and the sink may begin draining data from the tap. This is
+   * equivalent to calling {@code tap.attach(this)}.
+   *
+   * @param tap a {@link Tap} to attach.
+   * @throws NullPointerException if {@code tap} is {@code null}.
+   * @throws IllegalStateException if a tap has already been attached.
+   */
+  public final ProxyTransfer attach(Tap tap) {
+    if (tap == null)
+      throw new NullPointerException();
+    if (transfer != null)
+      throw new IllegalStateException("a tap is already attached");
+    return tap.attach(this);
+  }
+
+  public Bell<?> initialize(Path path) { return null; }
+
+  public Bell<?> finalize(Path path) { return null; }
+
+  public boolean random() { return false; }
+
+  public int concurrency() { return 1; }
 
   /**
    * Called when an upstream tap encounters an error while downloading a {@link
@@ -48,4 +73,26 @@ public interface Sink {
    * contextual information
    */
   //void handle(ResourceException error);
+
+  /**
+   * Get the root {@code Resource} of the attached {@code Tap}.
+   *
+   * @return The root {@code Resource} of the attached {@code Tap}.
+   * @throws IllegalStateException if a tap has not been attached.
+   */
+  public final Resource source() {
+    return transfer().source();
+  }
+
+  /**
+   * Get the {@code Resource} specified by {@code path} relative to the root of
+   * the attached {@code Tap}.
+   *
+   * @return The {@code Resource} specified by {@code path} relative to the
+   * root of the attached {@code Tap}.
+   * @throws IllegalStateException if a tap has not been attached.
+   */
+  protected final Resource source(Path path) {
+    return transfer.source(path);
+  }
 }

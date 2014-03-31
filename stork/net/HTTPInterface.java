@@ -25,107 +25,25 @@ import stork.feather.URI;
 import stork.feather.Path;
 import stork.scheduler.*;
 
-// XXX This whole file is a little kludgy... It has an ad hoc routing
-// implementation to handle overlapping HTTP resources (typically an API
-// resource and a static web interface resource) served over the same port.
-// This should probably be cleaned up a little bit.
+/**
+ * A basic HTTP interface to tie the scheduler into the HTTP server.
+ */
+public class HTTPInterface extends StorkInterface {
+  private static Map<URI, HTTPInterface> interfaces =
+    new HashMap<URI, HTTPInterface>();
 
-// An entry in the routing table.
-class Route {
-  HttpInterface iface;
-  URI uri;
-  Object end;
-
-  Route(HttpInterface hi, URI uri, Object end) {
-    iface = hi;
-    this.uri = uri.makeImmutable();
-    this.end = end;
-  }
-
-  // FIXME when URIs can officially be relatived. This is hacky, slow, and bad.
-  RouteMatch match(URI uri) {
-    String ep = uri.endpoint();
-    if (ep != null && !ep.equals(this.uri.endpoint()))
-      return null;
-    String q = uri.query();
-    uri.query(null).fragment(null);
-
-    Path ip = uri.path();
-    if (ip == null) ip = Path.ROOT;
-    Path bp = this.uri.path();
-    if (bp == null) bp = Path.ROOT;
-
-    // Prefix match
-    if (ip.toString().startsWith(bp.toString())) {
-      String rp = ip.toString().substring(bp.toString().length());
-      return new RouteMatch(rp, q, this);
-    }
-
-    return null;
-  }
-}
-
-// Result of a routing lookup.
-class RouteMatch {
-  String path, query;
-  Route route;
-
-  RouteMatch(String path, String query, Route route) {
-    this.path = path;
-    this.query = query;
-    this.route = route;
-  } boolean isWebDoc() {
-    return route.end instanceof File;
-  } File file() {
-    return new File((File) route.end, path);
-  }
-}
-
-// Simple mechanism for routing HTTP requests.
-class Router {
-  static List<Route> routes = new LinkedList<Route>();
-
-  // Returns the first matched route.
-  static RouteMatch route(URI uri) {
-    for (Route r : routes) {
-      RouteMatch m = r.match(uri);
-      if (m != null) return m;
-    } return null;
-  }
-
-  // Add a route.
-  static void add(Route r) { routes.add(r); }
-}
-
-/** Basic HTTP interface. */
-public class HttpInterface extends StorkInterface {
-  private final boolean https;
-
-  private static Map<URI, HttpInterface> interfaces =
-    new HashMap<URI, HttpInterface>();
-
-  // Used to create scheduler interface.
-  private HttpInterface(Scheduler s, URI uri) {
+  private HTTPInterface(Scheduler s, URI uri) {
     super(s, uri);
-    https = "https".equalsIgnoreCase(uri.scheme());
-    name = https ? "HTTPS" : "HTTP";
-  }
-
-  // Used to create webdoc interface.
-  private HttpInterface(String docroot, URI uri) {
-    super(null, uri);
-    https = "https".equalsIgnoreCase(uri.scheme());
-    name = https ? "HTTPS" : "HTTP";
   }
 
   /**
    * Listen for scheduler API requests at the given URI.
    */
-  public static HttpInterface register(Scheduler scheduler, URI uri) {
+  public static HTTPInterface register(Scheduler scheduler, URI uri) {
     URI ep = uri.endpointURI().makeImmutable();
-    HttpInterface hi = interfaces.get(ep);
+    HTTPInterface hi = interfaces.get(ep);
     if (hi == null)
-      interfaces.put(ep, hi = new HttpInterface(scheduler, uri));
+      interfaces.put(ep, hi = new HTTPInterface(scheduler, uri));
     else
       hi.sched = scheduler;
     Router.add(new Route(hi, uri, scheduler));
@@ -135,11 +53,11 @@ public class HttpInterface extends StorkInterface {
   /**
    * Listen for static document requests at the given URI.
    */
-  public static HttpInterface register(String docroot, URI uri) {
+  public static HTTPInterface register(String docroot, URI uri) {
     URI ep = uri.endpointURI().makeImmutable();
-    HttpInterface hi = interfaces.get(ep);
+    HTTPInterface hi = interfaces.get(ep);
     if (hi == null)
-      interfaces.put(ep, hi = new HttpInterface(docroot, uri));
+      interfaces.put(ep, hi = new HTTPInterface(docroot, uri));
     Router.add(new Route(hi, uri, new File(docroot)));
     return hi;
   }
@@ -169,11 +87,11 @@ public class HttpInterface extends StorkInterface {
   }
 
   // Custom exception which wraps an HTTP error code.
-  private class HttpException extends RuntimeException {
+  private class HTTPException extends RuntimeException {
     HttpResponseStatus status;
-    public HttpException(HttpResponseStatus s) {
+    public HTTPException(HttpResponseStatus s) {
       this(s, s.toString());
-    } public HttpException(HttpResponseStatus s, String m) {
+    } public HTTPException(HttpResponseStatus s, String m) {
       super(m);
       status = s;
     } public FullHttpResponse toHttpMessage() {
@@ -185,7 +103,7 @@ public class HttpInterface extends StorkInterface {
   }
 
   // A codec for converting HTTP requests into ads.
-  private class HttpDecoder extends MessageToMessageDecoder<HttpObject> {
+  private class HTTPDecoder extends MessageToMessageDecoder<HttpObject> {
     private HttpRequest head;  // Current request header.
     private HttpContent body;  // Current content body.
     private Scheduler.CommandHandler handler;
@@ -231,6 +149,7 @@ public class HttpInterface extends StorkInterface {
     public void handleBody(HttpContent body) {
       String type = head.headers().get("Content-Type");
       String data = body.content().toString(CharsetUtil.UTF_8);
+      System.out.println("DATA: "+data);
       if (type == null)
         ad.addAll(Ad.parse(data));
       else if (type.startsWith("application/x-www-form-urlencoded"))
@@ -249,11 +168,33 @@ public class HttpInterface extends StorkInterface {
         handleBody(body = (HttpContent) obj);
       } if (done) {
         if (route.isWebDoc())
-          out.add(route.file());
+          writeFile(route.file(), ctx);
         else
           out.add(ad.put("command", command));
         ad = new Ad();
         done = false;
+      }
+    }
+
+    private void writeFile(File file, ChannelHandlerContext ctx) {
+      if (file.isDirectory()) {
+        file = new File(file, "index.html");
+      } if (!file.exists()) {
+        ctx.writeAndFlush(new DefaultFullHttpResponse(HTTP_1_1, NOT_FOUND));
+      } else try {
+        HttpResponse r = new DefaultHttpResponse(HTTP_1_1, OK);
+        RandomAccessFile raf = new RandomAccessFile(file, "r");
+        setContentLength(r, raf.length());
+
+        String mt = Files.probeContentType(Paths.get(file.getPath()));
+        if (mt != null) r.headers().set(CONTENT_TYPE, mt);
+
+        ctx.write(r);
+        ctx.write(new DefaultFileRegion(raf.getChannel(), 0, raf.length()));
+        ctx.writeAndFlush(LastHttpContent.EMPTY_LAST_CONTENT);
+      } catch (Exception e) {
+        e.printStackTrace();
+        ctx.writeAndFlush(new DefaultFullHttpResponse(HTTP_1_1, INTERNAL_SERVER_ERROR));
       }
     }
 
@@ -267,27 +208,8 @@ public class HttpInterface extends StorkInterface {
     }
   }
 
-  // A codec for reading a static file into an HTTP response.
-  private class HttpFileEncoder extends MessageToMessageEncoder<File> {
-    public void encode(ChannelHandlerContext ctx, File file, List<Object> out) {
-      if (!file.exists()) {
-        out.add(new DefaultFullHttpResponse(HTTP_1_1, NOT_FOUND));
-      } else try {
-        FullHttpResponse r = new DefaultFullHttpResponse(HTTP_1_1, OK);
-        RandomAccessFile raf = new RandomAccessFile(file, "r");
-        setContentLength(r, raf.length());
-        String mt = Files.probeContentType(Paths.get(file.getPath()));
-        if (mt != null) r.headers().set(CONTENT_TYPE, mt);
-        out.add(r);
-        out.add(new ChunkedFile(raf));
-      } catch (Exception e) {
-        out.add(new DefaultFullHttpResponse(HTTP_1_1, INTERNAL_SERVER_ERROR));
-      }
-    }
-  }
-
   // A codec for converting ads to HTTP responses.
-  private class HttpAdEncoder extends MessageToMessageEncoder<Ad> {
+  private class HTTPAdEncoder extends MessageToMessageEncoder<Ad> {
     public void encode(ChannelHandlerContext ctx, Ad ad, List<Object> out) {
       String error = ad.get("error");
       FullHttpResponse r;
@@ -306,11 +228,7 @@ public class HttpInterface extends StorkInterface {
   public void init(Channel ch, ChannelPipeline pl) {
     pl.addLast(new HttpServerCodec());
     pl.addLast(new HttpContentCompressor());
-    pl.addLast(new HttpDecoder());
-    pl.addLast(new HttpAdEncoder());
-  }
-
-  public int defaultPort() {
-    return https ? 443 : 80;
+    pl.addLast(new HTTPDecoder());
+    pl.addLast(new HTTPAdEncoder());
   }
 }

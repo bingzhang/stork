@@ -848,7 +848,9 @@ public abstract class URI {
   }
 
   public static void main(String args[]) {
-    URI u = URI.create("ftp://google.com/thing/a/b/c?stuff#more");
+    String s = "ftp://google.com/thing/a/b/c?stuff#more";
+    if (args.length > 0) s = args[0];
+    URI u = URI.create(s);
     System.out.println(u);
     System.out.println(stork.ad.Ad.marshal(u));
   }

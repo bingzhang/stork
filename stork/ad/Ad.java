@@ -634,7 +634,7 @@ public class Ad implements Serializable {
       }
     } else for (AdMember f : t.fields()) try {
       AdObject ao = getObject(f.name());
-      if (ao != null) f.set(o, ao.as(f));
+      if (ao != null && !f.ignore()) f.set(o, ao.as(f));
     } catch (Exception e) {
       // Either ad had no such member or it was final and we couldn't set it.
       // Either way, we don't have to worry about it.
