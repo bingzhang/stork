@@ -9,6 +9,7 @@ import java.io.*;
 public class StorkSubmit extends StorkClient {
   private int submitted = 0, accepted = 0;
   private Ad[] jobs = null;
+  private boolean condor = Stork.settings.condor_mode;
 
   public StorkSubmit() {
     super("submit");
@@ -40,6 +41,10 @@ public class StorkSubmit extends StorkClient {
       "as \"x509_proxy\". This may be removed in the future.)"
     };
     add('b', "brief", "print only submitted job IDs");
+    add('l', "log", "output results to FILE in DAGMan log format")
+      .new SimpleParser("log", true);
+    add("LogNotes", "use NOTE as DAGMan lognote")
+      .new SimpleParser("LogNotes", true);
   }
 
   // Print the submission response ad in a nice way.
@@ -80,10 +85,14 @@ public class StorkSubmit extends StorkClient {
     Ad job = jobs[accepted];
     ad.addAll(job);
 
-    // Replace x509_proxy in job ad.
-    // TODO: A better way of doing this would be nice...
-    String proxy = job.get("x509_file");
-    job.remove("x509_file");
+    String proxy = job.get("x509proxy");
+    job.remove("x509proxy");
+
+    // Get log stuff.
+    if (env.has("log"))
+      ad.put("log", env.get("log"));
+    if (env.has("LogNotes"))
+      ad.put("LogNotes", env.get("LogNotes"));
 
     if (proxy != null) try {
       proxy = StorkUtil.readFile(proxy);
@@ -114,7 +123,6 @@ public class StorkSubmit extends StorkClient {
     // Don't print anything if we're being quiet.
     if (env.getBoolean("quiet")) return;
 
-    boolean condor = env.getBoolean("condor_mode");
     boolean brief  = env.getBoolean("brief");
 
     // Print something if there was an error.
@@ -145,7 +153,7 @@ public class StorkSubmit extends StorkClient {
     if (accepted == 0) {
       throw new RuntimeException(
         "0 of "+submitted+" jobs successfully submitted");
-    } else {
+    } else if (!condor) {
       System.out.println("Success: "+
         accepted+" of "+submitted+" jobs successfully submitted");
     }

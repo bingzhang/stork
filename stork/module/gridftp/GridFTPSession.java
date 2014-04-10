@@ -385,7 +385,9 @@ public class GridFTPSession extends StorkSession {
 
     // Return the path to the file represented by this channel.
     private String path() {
-      return URI.create(base+"/").resolve(file.path()).normalize().getPath();
+      String b = base;
+      if (!b.endsWith("/")) b = b+"/";
+      return URI.create(b).resolve(file.path()).normalize().getPath();
     }
 
     // Quick hack to open relativized channels.

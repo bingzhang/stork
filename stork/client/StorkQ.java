@@ -31,8 +31,6 @@ public class StorkQ extends StorkClient {
     add('r', "reverse", "reverse printing order (oldest first)");
     add('w', "watch", "fetch queue every T seconds (default 2)")
       .new SimpleParser("T", true);
-    add("daglog", "output results to FILE in DAGMan log format")
-      .new SimpleParser("FILE", true);
   }
 
   public void parseArgs(String[] args) {

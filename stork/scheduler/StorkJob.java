@@ -8,6 +8,8 @@ import stork.user.*;
 import static stork.scheduler.JobStatus.*;
 
 import java.net.URI;
+import java.io.*;
+import java.util.*;
 
 // A representation of a transfer job submitted to Stork. The entire
 // state of the job should be stored in the ad representing this job.
@@ -30,6 +32,7 @@ public class StorkJob {
 
   private int attempts = 0, max_attempts = 10;
   private String message;
+  private String log, LogNotes;
 
   private Ad options;
 
@@ -38,6 +41,7 @@ public class StorkJob {
 
   private transient User user;
   private transient Thread thread;
+  private transient UserLog logger = new UserLog();
 
   // Create and enqueue a new job from a user input ad. Don't give this
   // thing unsanitized user input, because it doesn't filter the user_id.
@@ -45,11 +49,15 @@ public class StorkJob {
   // TODO: Strict filtering and checking.
   public static StorkJob create(User user, Ad ad) {
     ad.remove("status", "job_id", "attempts");
-    ad.rename("src_url",  "src.url");
-    ad.rename("dest_url", "dest.url");
+    ad.rename("src_url",  "src");
+    ad.rename("dest_url", "dest");
+
+    System.out.println("THE AD: "+ad);
 
     StorkJob j = ad.unmarshalAs(StorkJob.class).status(scheduled);
     j.user = user;
+
+    System.out.println("THE JOB: "+Ad.marshal(j));
 
     if (j.src == null || j.dest == null)
       throw new RuntimeException("src or dest was null");
@@ -70,19 +78,24 @@ public class StorkJob {
     assert !s.isFilter;
 
     // Update state.
-    switch (status = s) {
+    if (status != s) switch (status = s) {
       case scheduled:
-        queue_timer = new Watch(true); break;
+        queue_timer = new Watch(true);
+        break;
       case processing:
-        run_timer = new Watch(true); break;
+        run_timer = new Watch(true);
+        logger.execute();
+        break;
       case removed:
         if (thread != null)
           thread.interrupt();
+        logger.abort();
       case failed:
       case complete:
         queue_timer.stop();
         run_timer.stop();
         progress.transferEnded(true);
+        if (s != removed) logger.term();
     } return this;
   }
 
@@ -91,6 +104,7 @@ public class StorkJob {
     return job_id;
   } public synchronized void jobId(int id) {
     job_id = id;
+    logger.submit();
   }
 
   // Called when the job gets removed from the queue.
@@ -142,6 +156,75 @@ public class StorkJob {
         return false;
       default:
         return true;
+    }
+  }
+
+  // Used for logging in DAGMan format.
+  private class UserLog {
+    PrintWriter writer;
+    int event = 0;
+
+    PrintWriter writer() {
+      if (log == null)
+        return null;
+      if (writer == null) try {
+        return writer = new PrintWriter(new FileWriter(log));
+      } catch (Exception e) {
+        throw new RuntimeException(e);
+      } return writer;
+    }
+
+    String header() {
+      Calendar c = new GregorianCalendar();
+      String fmt = "%03d (%03d.%03d.%03d) %02d/%02d %02d:%02d:%02d";
+      int pid = Integer.getInteger("pid");
+      int mo = c.get(Calendar.MONTH)+1;
+      int d = c.get(Calendar.DAY_OF_MONTH);
+      int h = c.get(Calendar.HOUR);
+      int m = c.get(Calendar.MINUTE);
+      int s = c.get(Calendar.SECOND);
+      return String.format(fmt, event++, job_id, pid, 0, mo, d, h, m, s);
+    }
+
+    void submit() {
+      if (writer() == null) return;
+      writer.print(header()+" ");
+      writer.println("Job submitted from host: localhost");
+      if (LogNotes != null)
+        writer.printf("%.8191s\n", LogNotes);
+      writer.println("...");
+      writer.flush();
+    }
+
+    void execute() {
+      if (writer() == null) return;
+      writer.print(header()+" ");
+      writer.println("Job executing on host: localhost");
+      writer.println("...");
+      writer.flush();
+    }
+
+    void term() {
+      if (writer() == null) return;
+      writer.print(header()+" ");
+      int v = (status() == failed) ? 1 : 0;
+      writer.println("Normal termination (return value "+v+")");
+      writer.println("...");
+      writer.flush();
+      close();
+    }
+
+    void abort() {
+      if (writer() == null) return;
+      writer.print(header()+" ");
+      writer.println("Job was aborted by the user.");
+      writer.println("...");
+      writer.flush();
+      close();
+    }
+
+    void close() {
+      try { writer.close(); } catch (Exception e) { }
     }
   }
 
