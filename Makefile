@@ -60,7 +60,7 @@ release: $(PROJECT).tar.gz
 src-release: $(PROJECT)-src.tar.gz
 
 $(PROJECT).tar.gz: $(JARFILE) 
-	$(TAR) czf $(PROJECT).tar.gz bin libexec --exclude='*/CVS' \
+	$(TAR) czf $(PROJECT).tar.gz bin lib stork.conf --exclude='*/CVS' \
 		--transform 's,^,$(PROJECT)/,'
 
 $(PROJECT)-src.tar.gz: dist-clean
