@@ -30,6 +30,33 @@ PROG="${SPLIT[0]}"
 unset SPLIT[0]
 set -- "${SPLIT[@]}" "$@"
 
+# Check command line arguments and handle -d and -Serverlog.
+ARGS=( )
+DAEMONIZE=false
+SERVERLOG="/dev/null"
+CMD=
+while [[ $# > 0 ]]; do
+  arg="$1"
+  shift
+
+  case $arg in
+    -d)
+      DAEMONIZE=true
+    ;;
+    -Serverlog)
+      SERVERLOG=$(cd $(dirname $1); pwd)/$(basename $1)
+      shift
+    ;;
+    *)
+      ARGS=("${ARGS[@]}" "$arg")
+      [ -z "$CMD" ] && [ "$arg[0]" != "-" ] && CMD=$arg
+    ;;
+  esac
+done
+
+# Only daemonize if we're running a server.
+[ -n "$DAEMONIZE" ] && [ "$CMD" != "server" ] && DAEMONIZE=false
+
 # Determine the absolute location of STORK_HOME.
 [ -z "$STORK_HOME" ] && STORK_HOME=$(dirname "$PROGDIR")
 [ -d "$STORK_HOME" ] || {
@@ -54,5 +81,10 @@ cd "$STORK_HOME" || {
 # Determine Java binary location.
 JAVA="$JAVA_HOME/bin/java"
 
-# Run it.
-exec $JAVA -Dpid=$$ -Xmx512m -cp "$STORK_HOME/lib/*" $JFLAGS $CLASS $@
+# Run it. TODO: Don't simply nohup.
+[ "$DAEMONIZE" = true ] && {
+  nohup $JAVA -Xmx512m -cp "$STORK_HOME/lib/*" $JFLAGS $CLASS $ARGS &> $SERVERLOG &
+  echo Starting Stork server in background...
+} || {
+  exec $JAVA -Xmx512m -cp "$STORK_HOME/lib/*" $JFLAGS $CLASS $ARGS
+}
